@@ -1,15 +1,20 @@
-import os
+import asyncio
 
-from parsimmon.claude_api import ClaudeAPI
+from claude_api import ClaudeAPI
 
 
-def main():
-    CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
-    claude = ClaudeAPI(CLAUDE_API_KEY)
-    prompt = input("Enter prompt > ")
-    response = claude.query(prompt)
-    print(f"Claude says: \n{response}")
+async def main():
+    claude = ClaudeAPI()
+    with open("urls.txt", "r") as f:
+        url_list = [url.strip() for url in f.readlines()]
+
+    await claude.load_context(url_list)
+    print(claude.context)
+
+    prompt = input("Ask me about sqlalchemy! > ")
+    response = claude.query(prompt=prompt)
+    print(response)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
