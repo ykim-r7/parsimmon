@@ -1,76 +1,77 @@
 import argparse
-import asyncio
-import sys
-import itertools
-import threading
 from pathlib import Path
-import time
 
-from anthropic import RateLimitError
 from claude_api import ClaudeAPI
+from langchain_core.prompts import ChatPromptTemplate
+
+context_system_template = """
+
+"""
+
+ast_grep_template = """
+    Return a valid ast-grep rule file that implements that pattern.
+    Go step-by-step.
+    First, create a pattern and ensure the syntax is valid by running it against the provided <Example>.
+    Second, create a rule file for the pattern and ensure it is valid by running it against the provided <Example>.
+    Third, write the rule file to a sensibly-named output file.
+    <Description>
+    {description}
+    </Description>
+
+    <Example>
+    {example}
+    </Example>
+    """
+
+pattern_valid = False
 
 
-class LoadingSpinner:
-    def __init__(self, message: str):
-        self.message = message
-        self.spinner = itertools.cycle(
-            ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        )
-        self.running = False
-
-    def spin(self):
-        while self.running:
-            sys.stdout.write(f"\r{next(self.spinner)} {self.message}")
-            sys.stdout.flush()
-            time.sleep(0.1)
-        sys.stdout.write("\r\033[K")  # Clear line
-
-    def __enter__(self):
-        self.running = True
-        self.thread = threading.Thread(target=self.spin)
-        self.thread.start()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.running = False
-        self.thread.join()
+def load_schema_context(claude):
+    claude.load_context("The following is the schema for an ast-grep rule file: ")
+    with open("rule.json", "r") as f:
+        claude.load_context(f.read())
 
 
-async def run_cli(path_to_urls: Path, query: str | None = None):
+def run_cli(args):
     claude = ClaudeAPI()
 
-    def execute_query(prompt: str, retries: int = 3) -> str:
-        for attempt in range(retries):
-            try:
-                with LoadingSpinner("Thinking..."):
-                    return claude.query(prompt)
-            except RateLimitError:
-                if attempt == retries - 1:
-                    raise
-                time.sleep(2**attempt)
-        return ""
+    context = ""
+    if path_to_context := args.path_to_context:
+        with open(path_to_context) as f:
+            context = f.read()
 
-    with open(path_to_urls) as f:
-        urls = [url.strip() for url in f if url.strip()]
+    if args.ast_grep_mode:
+        print("AST GREP MODE ACTIVATED\n")
+        prompt_template = ChatPromptTemplate.from_template(ast_grep_template)
 
-    with LoadingSpinner("Loading context..."):
-        await claude.load_context(urls)
+        user_prompt = input("\nDescribe your ast-grep rule > ").strip()
+        prompt = prompt_template.invoke(
+            {"description": user_prompt, "example": context}
+        )
+        messages = prompt.to_messages()
+        response = claude.query(messages)
+        for chunk in response:
+            print(chunk)
 
-    if query:
-        response = execute_query(query)
     else:
-        prompt = input("\nQuery > ").strip()
-        response = execute_query(prompt)
-
-    print(response)
+        print("INTERACTIVE MODE ACTIVATED\n")
+        while True:
+            prompt = input("\nQuery > ").strip()
+            response = claude.query(prompt)
+            for chunk in response:
+                print(chunk)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-u", "--path-to-urls", type=Path, required=True)
-    parser.add_argument("-q", "--query", type=str)
+    parser.add_argument("-a", "--ast-grep-mode", action="store_true")
+    parser.add_argument("-c", "--path-to-context", type=Path)
     args = parser.parse_args()
 
-    asyncio.run(run_cli(args.path_to_urls, args.query))
+    if args.ast_grep_mode and not args.path_to_context:
+        parser.error("--path-to-context is required when using --ast-grep-mode")
+
+    run_cli(args)
 
 
 if __name__ == "__main__":
